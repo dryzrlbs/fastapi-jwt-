@@ -1,32 +1,45 @@
 import os
 from fastapi import Request
 from fastapi.responses import JSONResponse
-from jose import jwt
-from jose.exceptions import ExpiredSignatureError, JWTClaimsError, JWKError, JWTError
 from fastapi import FastAPI
+from jose import jwt
+from jose.exceptions import ExpiredSignatureError, JWTError
+from dotenv import load_dotenv
 
-JWT_SECRET=os.getenv("JWT_SECRET")
+# .env yükle
+load_dotenv()
+
+JWT_SECRET = os.getenv("JWT_SECRET")
+JWT_ALGORITHM = "HS256"  # Şimdilik tek algoritma
 
 def register_middleware(app: FastAPI):
-
     @app.middleware("http")
     async def jwt_middleware(request: Request, call_next):
-
-        if request.url.path in ["/"]:
+        # Açık endpointler (token gerekmiyor)
+        open_paths = ["/"]
+        if request.url.path in open_paths:
             return await call_next(request)
 
-        auth = request.headers.get("Authorization")
-        if not auth or not auth.startswith("Bearer "):
-            return JSONResponse(status_code=401, content={"detail": "Missing token"})
+        # Authorization header kontrolü
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Missing or invalid Authorization header"}
+            )
 
+        # Token decode
+        token = auth_header.split()[1]
         try:
-            token = auth.split()[1]
-            request.state.user = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-
-        except ExpiredSignatureError as e:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            request.state.user = payload  # role ve sub buradan okunacak
+        except ExpiredSignatureError:
             return JSONResponse(status_code=401, content={"detail": "Token expired"})
-        except Exception as e:
-            print(e)    
-            return JSONResponse(status_code=401, content={"detail": f"ERROR: {e}"})
-                  
-        return await call_next(request)
+        except JWTError as e:
+            # Güvenlik için hatayı client’a detaylı vermiyoruz
+            print(f"JWT decode error: {e}")
+            return JSONResponse(status_code=401, content={"detail": "Invalid token"})
+
+        # Token geçerliyse devam et
+        response = await call_next(request)
+        return response
